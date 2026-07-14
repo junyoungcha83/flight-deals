@@ -1,5 +1,7 @@
-// 항공특가 — 실데이터 링크 런처(구글플라이트/스카이스캐너/카약)
-const BUILD = 'v1';
+// 항공특가 — 실데이터 링크 런처(구글플라이트/스카이스캐너/카약) + 아마데우스 가격분석
+const BUILD = 'v2';
+// 아마데우스 프록시(Cloudflare Worker) URL — 배포 후 채워짐. 비어있으면 분석은 '설정 필요'로 표시.
+const PROXY_URL = 'https://amadeus-proxy.junyoung-cha83.workers.dev';
 const APP = document.getElementById('app');
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -27,31 +29,40 @@ const apLabel = a => `${a[1]} (${a[0]})`;
 
 // ── 상태 ──
 const today=new Date(), addD=(n)=>{ const d=new Date(); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); };
-let S = { from:AP['ICN'], to:null, round:true, dep:addD(21), ret:addD(28), thr:'' };
+let S = { from:AP['ICN'], to:null, round:true, dep:addD(21), ret:addD(28), thr:'', adt:1, chd:0, inf:0 };
 const SKEY='fd-routes-v1';
 function loadRoutes(){ try{ return JSON.parse(localStorage.getItem(SKEY))||[]; }catch(_){ return []; } }
 function saveRoutes(r){ localStorage.setItem(SKEY, JSON.stringify(r)); }
 
 // ── 딥링크 ──
 const yymmdd = d => d.slice(2).replace(/-/g,'');
+function paxText(s){ let p=`${s.adt} adult${s.adt>1?'s':''}`; if(s.chd)p+=`, ${s.chd} child${s.chd>1?'ren':''}`; if(s.inf)p+=`, ${s.inf} infant${s.inf>1?'s':''}`; return p; }
 function gflights(s){
   let q=`Flights from ${s.from[0]} to ${s.to[0]} on ${s.dep}`;
   if(s.round && s.ret) q+=` through ${s.ret}`;
+  q+=` for ${paxText(s)}`;
   return 'https://www.google.com/travel/flights?hl=ko&curr=KRW&q='+encodeURIComponent(q);
 }
 function skyscanner(s){
   let u=`https://www.skyscanner.co.kr/transport/flights/${s.from[0].toLowerCase()}/${s.to[0].toLowerCase()}/${yymmdd(s.dep)}/`;
   if(s.round && s.ret) u+=yymmdd(s.ret)+'/';
-  return u+'?adults=1&currency=KRW&locale=ko-KR';
+  return u+`?adults=${s.adt}&children=${s.chd}&infants=${s.inf}&cabinclass=economy&currency=KRW&locale=ko-KR`;
 }
 function kayak(s){
   let u=`https://www.kayak.co.kr/flights/${s.from[0]}-${s.to[0]}/${s.dep}`;
   if(s.round && s.ret) u+='/'+s.ret;
+  u+=`/${s.adt}adults`;   // 카약은 성인 수만 경로로(소아·유아는 페이지에서 조정)
   return u+'?sort=price_a';
 }
 
 // ── 렌더 ──
 const QUICK=['NRT','KIX','FUK','CTS','OKA','BKK','DAD','CEB','DPS','TPE','HKG','SIN','DXB','CDG','LHR','JFK','SYD','GUM'];
+function stepper(label,key){
+  return `<div class="stp"><span class="stp-l">${label}</span>
+    <div class="stp-c"><button class="stp-b" data-k="${key}" data-d="-1">−</button>
+    <b id="pax_${key}">${S[key]}</b>
+    <button class="stp-b" data-k="${key}" data-d="1">+</button></div></div>`;
+}
 function render(){
   const routes=loadRoutes();
   APP.innerHTML=`
@@ -80,6 +91,10 @@ function render(){
       <div class="dates">
         <div><label>가는 날</label><input type="date" id="dep" class="in" value="${S.dep}" min="${addD(0)}"></div>
         <div id="retBox" style="${S.round?'':'display:none'}"><label>오는 날</label><input type="date" id="ret" class="in" value="${S.ret}" min="${S.dep}"></div>
+      </div>
+      <div class="pax">
+        <label>인원</label>
+        ${stepper('성인','adt')}${stepper('소아 <span>(2~11세)</span>','chd')}${stepper('유아 <span>(0~1세)</span>','inf')}
       </div>
       <div><label>가격 임계값 (선택 · 원)</label><input id="thr" class="in" inputmode="numeric" placeholder="예: 400000 이하일 때 특가" value="${esc(S.thr)}"></div>
 
@@ -125,6 +140,13 @@ function bind(){
   const dep=document.getElementById('dep'); dep.onchange=()=>{ S.dep=dep.value; const ret=document.getElementById('ret'); if(ret){ ret.min=S.dep; if(S.ret<S.dep){ S.ret=S.dep; ret.value=S.dep; } } };
   const ret=document.getElementById('ret'); if(ret) ret.onchange=()=>S.ret=ret.value;
   document.getElementById('thr').oninput=e=>S.thr=e.target.value.replace(/[^0-9]/g,'');
+  APP.querySelectorAll('.stp-b').forEach(b=>b.onclick=()=>{ const k=b.dataset.k, d=+b.dataset.d;
+    let v=S[k]+d;
+    if(k==='adt') v=Math.max(1,Math.min(9,v));
+    else if(k==='chd') v=Math.max(0,Math.min(8,v));
+    else if(k==='inf') v=Math.max(0,Math.min(S.adt,v));
+    S[k]=v; if(k==='adt'&&S.inf>S.adt){ S.inf=S.adt; const pe=document.getElementById('pax_inf'); if(pe)pe.textContent=S.inf; }
+    const el=document.getElementById('pax_'+k); if(el) el.textContent=v; });
   document.getElementById('go').onclick=showResult;
   document.getElementById('save').onclick=()=>{ if(!S.from||!S.to){ alert('출발·도착을 선택하세요.'); return; }
     const r=loadRoutes(); r.unshift({from:S.from[0],to:S.to[0],round:S.round,dep:S.dep,ret:S.ret,thr:S.thr}); saveRoutes(r.slice(0,20)); render(); };
@@ -139,14 +161,47 @@ function showResult(){
   document.getElementById('result').innerHTML=`
     <div class="card result">
       <div class="rt">${esc(apLabel(S.from))} <span>→</span> ${esc(apLabel(S.to))}</div>
-      <div class="rt-sub">${S.dep}${S.round?` ~ ${S.ret} · 왕복`:' · 편도'}</div>
+      <div class="rt-sub">${S.dep}${S.round?` ~ ${S.ret} · 왕복`:' · 편도'} · 성인${S.adt}${S.chd?`·소아${S.chd}`:''}${S.inf?`·유아${S.inf}`:''}</div>
       ${thrTxt}
       <a class="svc g" href="${g}" target="_blank" rel="noopener">🟦 구글플라이트 — 최저가·가격추세·특가 <span>›</span></a>
       <a class="svc s" href="${sky}" target="_blank" rel="noopener">🟩 스카이스캐너 — 항공사별 최저가 비교 <span>›</span></a>
       <a class="svc k" href="${kay}" target="_blank" rel="noopener">🟧 카약 — 가격순 정렬 <span>›</span></a>
       <a class="track" href="${g}" target="_blank" rel="noopener">🔔 구글플라이트에서 ‘가격 추적’ 켜기 (특가 알림)</a>
+      <button class="ama-btn" id="amaBtn">📊 1년 평균가 분석 (Amadeus)</button>
+      <div id="amaBox"></div>
     </div>`;
+  document.getElementById('amaBtn').onclick=analyze;
   document.getElementById('result').scrollIntoView({behavior:'smooth',block:'start'});
+}
+// ── 아마데우스 1년 가격분석 ──
+function analyze(){
+  const box=document.getElementById('amaBox'); if(!box) return;
+  if(!PROXY_URL){ box.innerHTML='<div class="ama-note">📊 가격분석 서버(Amadeus 프록시)가 아직 연결되지 않았어요. 아마데우스 무료 키만 등록하면 여기서 <b>과거 가격대 대비 지금이 얼마나 싼지</b>가 표시돼요.</div>'; return; }
+  box.innerHTML='<div class="ama-note">불러오는 중…</div>';
+  const u=`${PROXY_URL}?origin=${S.from[0]}&destination=${S.to[0]}&date=${S.dep}&currency=KRW&oneWay=${!S.round}`;
+  fetch(u).then(r=>r.json()).then(d=>{
+    if(d&&d.error){ box.innerHTML='<div class="ama-note">⚙️ 분석 준비 중 — 아마데우스 무료 키가 아직 등록되지 않았어요. (키 등록 후 자동으로 표시됩니다)</div>'; return; }
+    const m=(((d&&d.data)||[])[0]||{}).priceMetrics;
+    if(!m||!m.length){ box.innerHTML='<div class="ama-note">이 노선·날짜의 과거 가격 데이터가 없어요. (날짜를 조금 바꿔보세요 · 테스트 환경은 일부 노선만 제공)</div>'; return; }
+    const g={}; m.forEach(x=>g[x.quartileRanking]=+x.amount);
+    const min=g.MINIMUM, q1=g.FIRST_QUARTILE, med=g.MEDIUM, q3=g.THIRD_QUARTILE, max=g.MAXIMUM;
+    const won=n=>'₩'+Math.round(n).toLocaleString();
+    let verdict=''; const thr=+S.thr;
+    if(thr){ let lvl,cl; if(thr<=min){lvl='🔥 역대 최저 수준!';cl='fire';} else if(thr<=q1){lvl='👍 저렴 (하위 25%)';cl='good';} else if(thr<=med){lvl='🙂 평균 이하';cl='good';} else if(thr<=q3){lvl='😐 평균 이상';cl='mid';} else {lvl='💸 비싼 편';cl='bad';}
+      const pct=Math.round((1-(med?thr/med:1))*100);
+      verdict=`<div class="ama-v ${cl}">목표가 ${won(thr)} → ${lvl}${pct>0?` · 보통보다 ${pct}%↓`:''}</div>`; }
+    box.innerHTML=`
+      <div class="ama-title">📊 이 노선 과거 가격대 <span>${S.dep}${S.round?' 왕복':' 편도'}</span></div>
+      <div class="ama-grid">
+        <div><span>최저</span><b>${won(min)}</b></div>
+        <div><span>저렴 25%</span><b>${won(q1)}</b></div>
+        <div class="med"><span>보통(중앙)</span><b>${won(med)}</b></div>
+        <div><span>비쌈 75%</span><b>${won(q3)}</b></div>
+        <div><span>최고</span><b>${won(max)}</b></div>
+      </div>
+      ${verdict}
+      <div class="ama-note">과거 실제 예약가 분포(Amadeus). 위 <b>구글플라이트 실시간 최저가가 보통(중앙값) ${won(med)}보다 낮으면 특가</b>예요.</div>`;
+  }).catch(()=>{ box.innerHTML='<div class="ama-note">분석을 불러오지 못했어요 (네트워크/서버). 잠시 후 다시 시도.</div>'; });
 }
 render();
 if('serviceWorker' in navigator){
