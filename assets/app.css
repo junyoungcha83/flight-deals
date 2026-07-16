@@ -81,3 +81,17 @@ label{display:block;font-size:.78rem;color:var(--muted);font-weight:700;margin:0
 .ama-v.mid{background:#2a2411;color:#ffd479}.ama-v.bad{background:#341018;color:#ff7a8a}
 .ama-note{color:var(--muted);font-size:.8rem;line-height:1.6;margin-top:8px}
 .ama-note b{color:var(--ink)}
+
+/* 현재 최저가 · 특가 카드 */
+.ama-box{margin-bottom:12px}
+.svc-h{color:var(--muted);font-size:.78rem;font-weight:700;margin:6px 0 8px}
+.svc.n{background:#03c75a}
+.cur{border-radius:14px;padding:14px;text-align:center;margin-bottom:6px;border:1px solid var(--line)}
+.cur.fire{background:#3a1414;border-color:#ff6b3d}.cur.good{background:#0f2e22;border-color:#2bbf7e}
+.cur.mid{background:#12294a}.cur.bad{background:#341018;border-color:#c0455a}
+.cur-top{font-weight:800;font-size:.85rem;color:var(--muted)}
+.cur.fire .cur-top,.cur.good .cur-top{color:#fff}
+.cur-p{font-size:1.8rem;font-weight:900;margin:2px 0}
+.cur-p small{font-size:.8rem;color:var(--muted);font-weight:700}
+.cur-cmp{font-weight:800;font-size:.92rem}
+.rdeal{color:#ff8a5b;font-weight:900;font-size:.82rem;margin-left:6px}

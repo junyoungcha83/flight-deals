@@ -1,5 +1,5 @@
 // 항공특가 — 실데이터 링크 런처(구글플라이트/스카이스캐너/카약) + 아마데우스 가격분석
-const BUILD = 'v2';
+const BUILD = 'v3';
 // 아마데우스 프록시(Cloudflare Worker) URL — 배포 후 채워짐. 비어있으면 분석은 '설정 필요'로 표시.
 const PROXY_URL = 'https://amadeus-proxy.junyoung-cha83.workers.dev';
 const APP = document.getElementById('app');
@@ -36,12 +36,11 @@ function saveRoutes(r){ localStorage.setItem(SKEY, JSON.stringify(r)); }
 
 // ── 딥링크 ──
 const yymmdd = d => d.slice(2).replace(/-/g,'');
-function paxText(s){ let p=`${s.adt} adult${s.adt>1?'s':''}`; if(s.chd)p+=`, ${s.chd} child${s.chd>1?'ren':''}`; if(s.inf)p+=`, ${s.inf} infant${s.inf>1?'s':''}`; return p; }
-function gflights(s){
-  let q=`Flights from ${s.from[0]} to ${s.to[0]} on ${s.dep}`;
-  if(s.round && s.ret) q+=` through ${s.ret}`;
-  q+=` for ${paxText(s)}`;
-  return 'https://www.google.com/travel/flights?hl=ko&curr=KRW&q='+encodeURIComponent(q);
+function naver(s){
+  const dd=s.dep.replace(/-/g,''), rr=s.ret?s.ret.replace(/-/g,''):'';
+  let u=`https://flight.naver.com/flights/international/${s.from[0]}-${s.to[0]}-${dd}`;
+  if(s.round && rr) u+=`/${s.to[0]}-${s.from[0]}-${rr}`;
+  return u+`?adult=${s.adt}&child=${s.chd}&infant=${s.inf}&fareType=Y`;
 }
 function skyscanner(s){
   let u=`https://www.skyscanner.co.kr/transport/flights/${s.from[0].toLowerCase()}/${s.to[0].toLowerCase()}/${yymmdd(s.dep)}/`;
@@ -67,7 +66,7 @@ function render(){
   const routes=loadRoutes();
   APP.innerHTML=`
     <div class="top"><div class="brand">✈️ 항공특가 <sup class="ver">${BUILD}</sup></div></div>
-    <div class="sub">출발·도착을 넣고 <b>구글플라이트·스카이스캐너</b>의 특가/가격추세 페이지로 바로 이동해요.</div>
+    <div class="sub">출발·도착을 넣으면 <b>지금 최저가·특가 여부</b>를 앱에서 바로 보고, 네이버·스카이스캐너·카약으로 이어서 예약해요.</div>
 
     <div class="card">
       <div class="ac-wrap">
@@ -104,20 +103,21 @@ function render(){
     <div id="result"></div>
 
     <div class="card">
-      <div class="ch"><b>⭐ 관심 노선</b><button class="mini" id="save">+ 현재 노선 저장</button></div>
-      <div id="routes">${routes.length?routes.map((r,i)=>routeChip(r,i)).join(''):'<div class="muted">저장한 노선이 없어요. 자주 보는 노선을 저장해두고 한 번에 확인하세요.</div>'}</div>
+      <div class="ch"><b>⭐ 관심 노선</b><button class="mini" id="notify">🔔 알림 켜기</button><button class="mini" id="save">+ 저장</button></div>
+      <div id="routes">${routes.length?routes.map((r,i)=>routeChip(r,i)).join(''):'<div class="muted">저장한 노선이 없어요. 저장해두면 앱 열 때 자동으로 특가를 진단하고 알림을 줘요.</div>'}</div>
     </div>
 
     <div class="note">
-      💡 <b>1년 평균 대비 할인율·특가</b>는 연결되는 <b>구글플라이트</b>가 "이 가격은 보통보다 저렴/보통/비쌈"과 가격 그래프로 보여줘요.<br>
-      🔔 <b>알림</b>은 구글플라이트 <b>‘가격 추적’</b>을 켜면 특가 시 이메일/휴대폰 알림이 옵니다(아래 버튼).<br>
-      ⚠️ 항공사 공홈 실시간 통합은 무료로 제공되지 않아, 합법적으로 실데이터를 보여주는 이 서비스들로 연결하는 방식이에요.
+      🔥 <b>특가 표시(앱 안)</b>: 지금 <b>공홈 외 판매처(항공사·OTA) 포함 실시간 최저가</b>와 <b>과거 가격대(1년 분포)</b>를 비교해 특가 여부를 바로 보여줘요. (Amadeus)<br>
+      🔔 <b>알림</b>: ‘알림 켜기’ 후 저장한 노선이 특가가 되면 <b>휴대폰 알림</b>이 떠요. (앱을 백그라운드에서도 확인하려면 서버 예약 확인 추가 필요 — 원하면 붙여드려요)<br>
+      🔗 예약은 <b>네이버항공권·스카이스캐너·카약</b>에서 조건 그대로 이어서 확인.
     </div>`;
   bind();
+  checkSavedDeals();
 }
 function routeChip(r,i){
   const f=AP[r.from]||[r.from,r.from], t=AP[r.to]||[r.to,r.to];
-  return `<div class="rchip"><button class="ropen" data-i="${i}">${f[1]}(${r.from}) → ${t[1]}(${r.to}) · ${r.round?'왕복':'편도'}${r.thr?` · ~₩${Number(r.thr).toLocaleString()}`:''}</button><button class="rdel" data-i="${i}">✕</button></div>`;
+  return `<div class="rchip" data-i="${i}"><button class="ropen" data-i="${i}">${f[1]}(${r.from}) → ${t[1]}(${r.to}) · ${r.round?'왕복':'편도'}${r.thr?` · ~₩${Number(r.thr).toLocaleString()}`:''}<span class="rdeal"></span></button><button class="rdel" data-i="${i}">✕</button></div>`;
 }
 
 // 자동완성 부착
@@ -149,60 +149,106 @@ function bind(){
     const el=document.getElementById('pax_'+k); if(el) el.textContent=v; });
   document.getElementById('go').onclick=showResult;
   document.getElementById('save').onclick=()=>{ if(!S.from||!S.to){ alert('출발·도착을 선택하세요.'); return; }
-    const r=loadRoutes(); r.unshift({from:S.from[0],to:S.to[0],round:S.round,dep:S.dep,ret:S.ret,thr:S.thr}); saveRoutes(r.slice(0,20)); render(); };
-  APP.querySelectorAll('.ropen').forEach(b=>b.onclick=()=>{ const r=loadRoutes()[+b.dataset.i]; S.from=AP[r.from]||S.from; S.to=AP[r.to]||S.to; S.round=r.round; S.dep=r.dep; S.ret=r.ret; S.thr=r.thr||''; render(); showResult(); window.scrollTo(0,0); });
+    const r=loadRoutes(); r.unshift({from:S.from[0],to:S.to[0],round:S.round,dep:S.dep,ret:S.ret,thr:S.thr,adt:S.adt,chd:S.chd,inf:S.inf}); saveRoutes(r.slice(0,20)); render(); };
+  APP.querySelectorAll('.ropen').forEach(b=>b.onclick=()=>{ const r=loadRoutes()[+b.dataset.i]; S.from=AP[r.from]||S.from; S.to=AP[r.to]||S.to; S.round=r.round; S.dep=r.dep; S.ret=r.ret; S.thr=r.thr||''; S.adt=r.adt||1; S.chd=r.chd||0; S.inf=r.inf||0; render(); showResult(); window.scrollTo(0,0); });
   APP.querySelectorAll('.rdel').forEach(b=>b.onclick=()=>{ const r=loadRoutes(); r.splice(+b.dataset.i,1); saveRoutes(r); render(); });
+  const nb=document.getElementById('notify'); if(nb){ if(('Notification' in window)&&Notification.permission==='granted') nb.textContent='🔔 알림 ON';
+    nb.onclick=()=>{ if(!('Notification' in window)){ alert('이 브라우저는 알림을 지원하지 않아요.'); return; }
+      Notification.requestPermission().then(p=>{ if(p==='granted'){ nb.textContent='🔔 알림 ON'; checkSavedDeals(); } }); }; }
+}
+// 저장 노선 자동 특가 진단(앱 열 때) + 특가면 칩 표시·알림
+const _notified={};
+function checkSavedDeals(){
+  if(!PROXY_URL) return; const routes=loadRoutes(); if(!routes.length) return;
+  routes.forEach((r,i)=>{
+    const s={from:AP[r.from]||[r.from,r.from],to:AP[r.to]||[r.to,r.to],round:r.round,dep:r.dep,ret:r.ret,thr:r.thr,adt:r.adt||1,chd:r.chd||0,inf:r.inf||0};
+    diagnose(s).then(res=>{ if(!res||res.error||!res.deal) return;
+      const el=document.querySelector(`.rchip[data-i="${i}"] .rdeal`); if(el) el.textContent=`🔥 ${won(res.cur)}`;
+      const key=r.from+r.to+r.dep+r.ret;
+      if(!_notified[key] && ('Notification' in window) && Notification.permission==='granted'){
+        _notified[key]=1;
+        new Notification('🔥 항공특가 발견!', { body:`${r.from} → ${r.to}  ${won(res.cur)}  (${res.tag||'특가'})`, icon:'assets/icon.svg' });
+      }
+    });
+  });
 }
 function showResult(){
   if(!S.from||!S.to){ alert('출발·도착 공항을 선택하세요.'); return; }
   if(S.from[0]===S.to[0]){ alert('출발과 도착이 같아요.'); return; }
-  const g=gflights(S), sky=skyscanner(S), kay=kayak(S);
-  const thrTxt = S.thr? `<div class="thr">🎯 목표가 <b>₩${Number(S.thr).toLocaleString()} 이하</b>일 때가 특가 — 구글플라이트 ‘가격 추적’을 이 값 근처로 켜두세요.</div>`:'';
+  const nav=naver(S), sky=skyscanner(S), kay=kayak(S);
+  const thrTxt = S.thr? `<div class="thr">🎯 목표가 <b>₩${Number(S.thr).toLocaleString()} 이하</b>이면 특가로 표시돼요.</div>`:'';
   document.getElementById('result').innerHTML=`
     <div class="card result">
       <div class="rt">${esc(apLabel(S.from))} <span>→</span> ${esc(apLabel(S.to))}</div>
       <div class="rt-sub">${S.dep}${S.round?` ~ ${S.ret} · 왕복`:' · 편도'} · 성인${S.adt}${S.chd?`·소아${S.chd}`:''}${S.inf?`·유아${S.inf}`:''}</div>
       ${thrTxt}
-      <a class="svc g" href="${g}" target="_blank" rel="noopener">🟦 구글플라이트 — 최저가·가격추세·특가 <span>›</span></a>
-      <a class="svc s" href="${sky}" target="_blank" rel="noopener">🟩 스카이스캐너 — 항공사별 최저가 비교 <span>›</span></a>
+      <div id="amaBox" class="ama-box"><div class="ama-note">특가 진단 불러오는 중…</div></div>
+      <div class="svc-h">예약 사이트에서 바로 확인 (조건 그대로 검색)</div>
+      <a class="svc n" href="${nav}" target="_blank" rel="noopener">🟢 네이버항공권 — 최저가 비교 <span>›</span></a>
+      <a class="svc s" href="${sky}" target="_blank" rel="noopener">🔵 스카이스캐너 — 항공사별 최저가 <span>›</span></a>
       <a class="svc k" href="${kay}" target="_blank" rel="noopener">🟧 카약 — 가격순 정렬 <span>›</span></a>
-      <a class="track" href="${g}" target="_blank" rel="noopener">🔔 구글플라이트에서 ‘가격 추적’ 켜기 (특가 알림)</a>
-      <button class="ama-btn" id="amaBtn">📊 1년 평균가 분석 (Amadeus)</button>
-      <div id="amaBox"></div>
     </div>`;
-  document.getElementById('amaBtn').onclick=analyze;
+  analyze();
   document.getElementById('result').scrollIntoView({behavior:'smooth',block:'start'});
 }
-// ── 아마데우스 1년 가격분석 ──
+// ── 특가 진단: 현재 최저가(공홈 외 포함) + 과거 가격대 (Amadeus) ──
+const won = n => '₩'+Math.round(n).toLocaleString();
+function apiBase(s){ return `${PROXY_URL}?origin=${s.from[0]}&destination=${s.to[0]}&date=${s.dep}&currency=KRW&oneWay=${!s.round}`
+  + `&adults=${s.adt}&children=${s.chd}&infants=${s.inf}` + (s.round&&s.ret?`&returnDate=${s.ret}`:''); }
+// 현재 최저가 + 과거분포로 특가 판정. 콜백(result)로도 넘겨줌(저장노선 자동진단용)
+function diagnose(s, cb){
+  const base=apiBase(s);
+  return Promise.all([
+    fetch(base+'&mode=metrics').then(r=>r.json()).catch(()=>({})),
+    fetch(base+'&mode=offers').then(r=>r.json()).catch(()=>({}))
+  ]).then(([mm,oo])=>{
+    if((mm&&mm.error)||(oo&&oo.error)) return {error:true};
+    let g=null; const m=(((mm&&mm.data)||[])[0]||{}).priceMetrics;
+    if(m&&m.length){ g={}; m.forEach(x=>g[x.quartileRanking]=+x.amount); }
+    let cur=null, carrier=''; const offers=(oo&&oo.data)||[];
+    if(offers.length){ let b=offers[0]; offers.forEach(o=>{ if(+o.price.grandTotal<+b.price.grandTotal) b=o; }); cur=+b.price.grandTotal; carrier=(b.validatingAirlineCodes||[])[0]||''; }
+    // 특가 판정
+    let deal=false, tag='', cl='mid'; const thr=+s.thr;
+    if(g && cur!=null){
+      if(cur<=g.MINIMUM){tag='🔥 역대 최저가!';cl='fire';deal=true;}
+      else if(cur<=g.FIRST_QUARTILE){tag='👍 저렴 (하위 25%)';cl='good';deal=true;}
+      else if(cur<=g.MEDIUM){tag='🙂 평균 이하';cl='good';}
+      else if(cur<=g.THIRD_QUARTILE){tag='😐 평균 이상';cl='mid';}
+      else {tag='💸 비싼 편';cl='bad';}
+    }
+    if(thr && cur!=null && cur<=thr){ deal=true; if(!/최저|저렴/.test(tag)){ tag=(tag?tag+' · ':'')+'🎯 목표가 이하'; cl='good'; } }
+    const res={g,cur,carrier,deal,tag,cl};
+    if(cb) cb(res);
+    return res;
+  }).catch(()=>({error:true}));
+}
 function analyze(){
   const box=document.getElementById('amaBox'); if(!box) return;
-  if(!PROXY_URL){ box.innerHTML='<div class="ama-note">📊 가격분석 서버(Amadeus 프록시)가 아직 연결되지 않았어요. 아마데우스 무료 키만 등록하면 여기서 <b>과거 가격대 대비 지금이 얼마나 싼지</b>가 표시돼요.</div>'; return; }
-  box.innerHTML='<div class="ama-note">불러오는 중…</div>';
-  const u=`${PROXY_URL}?origin=${S.from[0]}&destination=${S.to[0]}&date=${S.dep}&currency=KRW&oneWay=${!S.round}`;
-  fetch(u).then(r=>r.json()).then(d=>{
-    if(d&&d.error){ box.innerHTML='<div class="ama-note">⚙️ 분석 준비 중 — 아마데우스 무료 키가 아직 등록되지 않았어요. (키 등록 후 자동으로 표시됩니다)</div>'; return; }
-    const m=(((d&&d.data)||[])[0]||{}).priceMetrics;
-    if(!m||!m.length){ box.innerHTML='<div class="ama-note">이 노선·날짜의 과거 가격 데이터가 없어요. (날짜를 조금 바꿔보세요 · 테스트 환경은 일부 노선만 제공)</div>'; return; }
-    const g={}; m.forEach(x=>g[x.quartileRanking]=+x.amount);
-    const min=g.MINIMUM, q1=g.FIRST_QUARTILE, med=g.MEDIUM, q3=g.THIRD_QUARTILE, max=g.MAXIMUM;
-    const won=n=>'₩'+Math.round(n).toLocaleString();
-    let verdict=''; const thr=+S.thr;
-    if(thr){ let lvl,cl; if(thr<=min){lvl='🔥 역대 최저 수준!';cl='fire';} else if(thr<=q1){lvl='👍 저렴 (하위 25%)';cl='good';} else if(thr<=med){lvl='🙂 평균 이하';cl='good';} else if(thr<=q3){lvl='😐 평균 이상';cl='mid';} else {lvl='💸 비싼 편';cl='bad';}
-      const pct=Math.round((1-(med?thr/med:1))*100);
-      verdict=`<div class="ama-v ${cl}">목표가 ${won(thr)} → ${lvl}${pct>0?` · 보통보다 ${pct}%↓`:''}</div>`; }
-    box.innerHTML=`
-      <div class="ama-title">📊 이 노선 과거 가격대 <span>${S.dep}${S.round?' 왕복':' 편도'}</span></div>
+  if(!PROXY_URL){ box.innerHTML=keyNote(); return; }
+  box.innerHTML='<div class="ama-note">특가 진단 불러오는 중…</div>';
+  diagnose(S).then(r=>{
+    if(!r || r.error){ box.innerHTML=keyNote(); return; }
+    const {g,cur,carrier,deal,tag,cl}=r;
+    let html='';
+    if(cur!=null){
+      const pct = g? Math.round((1-cur/g.MEDIUM)*100):0;
+      html+=`<div class="cur ${cl}">
+        <div class="cur-top">${deal?'🔥 특가 발견!':'지금 최저가'}</div>
+        <div class="cur-p">${won(cur)}${carrier?` <small>· ${esc(carrier)}</small>`:''}</div>
+        ${tag?`<div class="cur-cmp">${tag}${pct>0?` · 보통보다 ${pct}%↓`:''}</div>`:''}</div>`;
+    } else {
+      html+=`<div class="ama-note">지금 판매 중인 항공권을 못 찾았어요. (테스트 환경은 일부 노선만 · 날짜를 바꿔보세요)</div>`;
+    }
+    if(g){ html+=`<div class="ama-title">📊 이 노선 과거 가격대 <span>${S.dep}${S.round?' 왕복':' 편도'}</span></div>
       <div class="ama-grid">
-        <div><span>최저</span><b>${won(min)}</b></div>
-        <div><span>저렴 25%</span><b>${won(q1)}</b></div>
-        <div class="med"><span>보통(중앙)</span><b>${won(med)}</b></div>
-        <div><span>비쌈 75%</span><b>${won(q3)}</b></div>
-        <div><span>최고</span><b>${won(max)}</b></div>
-      </div>
-      ${verdict}
-      <div class="ama-note">과거 실제 예약가 분포(Amadeus). 위 <b>구글플라이트 실시간 최저가가 보통(중앙값) ${won(med)}보다 낮으면 특가</b>예요.</div>`;
-  }).catch(()=>{ box.innerHTML='<div class="ama-note">분석을 불러오지 못했어요 (네트워크/서버). 잠시 후 다시 시도.</div>'; });
+        <div><span>최저</span><b>${won(g.MINIMUM)}</b></div><div><span>저렴 25%</span><b>${won(g.FIRST_QUARTILE)}</b></div>
+        <div class="med"><span>보통</span><b>${won(g.MEDIUM)}</b></div><div><span>비쌈 75%</span><b>${won(g.THIRD_QUARTILE)}</b></div>
+        <div><span>최고</span><b>${won(g.MAXIMUM)}</b></div></div>`; }
+    html+=`<div class="ama-note">현재가는 <b>공홈 외 판매처(항공사·OTA) 포함 실시간 최저가</b>(Amadeus). 저장한 노선은 앱 열 때 자동 진단돼요.</div>`;
+    box.innerHTML=html;
+  });
 }
+function keyNote(){ return '<div class="ama-note">⚙️ 특가 진단 준비 중 — 아마데우스 무료 키가 등록되면 <b>지금 최저가·특가 여부</b>가 여기 바로 표시돼요.</div>'; }
 render();
 if('serviceWorker' in navigator){
   let had=!!navigator.serviceWorker.controller, refreshing=false;
