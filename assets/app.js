@@ -1,6 +1,6 @@
-// 항공특가 — 실데이터 링크 런처(구글플라이트/스카이스캐너/카약) + 아마데우스 가격분석
-const BUILD = 'v3';
-// 아마데우스 프록시(Cloudflare Worker) URL — 배포 후 채워짐. 비어있으면 분석은 '설정 필요'로 표시.
+// 항공특가 — 실데이터 링크 런처(네이버·스카이스캐너·카약) + Travelpayouts 가격분석
+const BUILD = 'v4';
+// Travelpayouts 프록시(Cloudflare Worker) URL — 배포 후 채워짐. 비어있으면 분석은 '설정 필요'로 표시.
 const PROXY_URL = 'https://amadeus-proxy.junyoung-cha83.workers.dev';
 const APP = document.getElementById('app');
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -108,7 +108,7 @@ function render(){
     </div>
 
     <div class="note">
-      🔥 <b>특가 표시(앱 안)</b>: 지금 <b>공홈 외 판매처(항공사·OTA) 포함 실시간 최저가</b>와 <b>과거 가격대(1년 분포)</b>를 비교해 특가 여부를 바로 보여줘요. (Amadeus)<br>
+      🔥 <b>특가 표시(앱 안)</b>: 지금 <b>공홈 외 판매처(항공사·OTA) 포함 캐시된 시장 최저가</b>와 <b>이번 달 최저가 분포</b>를 비교해 특가 여부를 바로 보여줘요. (Travelpayouts)<br>
       🔔 <b>알림</b>: ‘알림 켜기’ 후 저장한 노선이 특가가 되면 <b>휴대폰 알림</b>이 떠요. (앱을 백그라운드에서도 확인하려면 서버 예약 확인 추가 필요 — 원하면 붙여드려요)<br>
       🔗 예약은 <b>네이버항공권·스카이스캐너·카약</b>에서 조건 그대로 이어서 확인.
     </div>`;
@@ -191,26 +191,22 @@ function showResult(){
   analyze();
   document.getElementById('result').scrollIntoView({behavior:'smooth',block:'start'});
 }
-// ── 특가 진단: 현재 최저가(공홈 외 포함) + 과거 가격대 (Amadeus) ──
+// ── 특가 진단: 현재 최저가(캐시 시장가) + 이번 달 가격 분포 (Travelpayouts) ──
 const won = n => '₩'+Math.round(n).toLocaleString();
 function apiBase(s){ return `${PROXY_URL}?origin=${s.from[0]}&destination=${s.to[0]}&date=${s.dep}&currency=KRW&oneWay=${!s.round}`
   + `&adults=${s.adt}&children=${s.chd}&infants=${s.inf}` + (s.round&&s.ret?`&returnDate=${s.ret}`:''); }
-// 현재 최저가 + 과거분포로 특가 판정. 콜백(result)로도 넘겨줌(저장노선 자동진단용)
+// 현재 최저가 + 이번 달 분포로 특가 판정. 콜백(result)로도 넘겨줌(저장노선 자동진단용)
 function diagnose(s, cb){
-  const base=apiBase(s);
-  return Promise.all([
-    fetch(base+'&mode=metrics').then(r=>r.json()).catch(()=>({})),
-    fetch(base+'&mode=offers').then(r=>r.json()).catch(()=>({}))
-  ]).then(([mm,oo])=>{
-    if((mm&&mm.error)||(oo&&oo.error)) return {error:true};
-    let g=null; const m=(((mm&&mm.data)||[])[0]||{}).priceMetrics;
-    if(m&&m.length){ g={}; m.forEach(x=>g[x.quartileRanking]=+x.amount); }
-    let cur=null, carrier=''; const offers=(oo&&oo.data)||[];
-    if(offers.length){ let b=offers[0]; offers.forEach(o=>{ if(+o.price.grandTotal<+b.price.grandTotal) b=o; }); cur=+b.price.grandTotal; carrier=(b.validatingAirlineCodes||[])[0]||''; }
+  return fetch(apiBase(s)).then(r=>r.json()).catch(()=>({error:true})).then(d=>{
+    if(d&&d.error) return {error:true};
+    // 프록시 정규화 응답: {current, airline, dist:{min,q1,med,q3,max}}
+    let g=null; const dd=d&&d.dist;
+    if(dd){ g={MINIMUM:+dd.min, FIRST_QUARTILE:+dd.q1, MEDIUM:+dd.med, THIRD_QUARTILE:+dd.q3, MAXIMUM:+dd.max}; }
+    let cur=(d&&d.current!=null)?+d.current:null, carrier=(d&&d.airline)||'';
     // 특가 판정
     let deal=false, tag='', cl='mid'; const thr=+s.thr;
     if(g && cur!=null){
-      if(cur<=g.MINIMUM){tag='🔥 역대 최저가!';cl='fire';deal=true;}
+      if(cur<=g.MINIMUM){tag='🔥 이번 달 최저가!';cl='fire';deal=true;}
       else if(cur<=g.FIRST_QUARTILE){tag='👍 저렴 (하위 25%)';cl='good';deal=true;}
       else if(cur<=g.MEDIUM){tag='🙂 평균 이하';cl='good';}
       else if(cur<=g.THIRD_QUARTILE){tag='😐 평균 이상';cl='mid';}
@@ -239,16 +235,16 @@ function analyze(){
     } else {
       html+=`<div class="ama-note">지금 판매 중인 항공권을 못 찾았어요. (테스트 환경은 일부 노선만 · 날짜를 바꿔보세요)</div>`;
     }
-    if(g){ html+=`<div class="ama-title">📊 이 노선 과거 가격대 <span>${S.dep}${S.round?' 왕복':' 편도'}</span></div>
+    if(g){ html+=`<div class="ama-title">📊 이 노선 가격대 (이번 달 기준) <span>${S.dep}${S.round?' 왕복':' 편도'}</span></div>
       <div class="ama-grid">
         <div><span>최저</span><b>${won(g.MINIMUM)}</b></div><div><span>저렴 25%</span><b>${won(g.FIRST_QUARTILE)}</b></div>
         <div class="med"><span>보통</span><b>${won(g.MEDIUM)}</b></div><div><span>비쌈 75%</span><b>${won(g.THIRD_QUARTILE)}</b></div>
         <div><span>최고</span><b>${won(g.MAXIMUM)}</b></div></div>`; }
-    html+=`<div class="ama-note">현재가는 <b>공홈 외 판매처(항공사·OTA) 포함 실시간 최저가</b>(Amadeus). 저장한 노선은 앱 열 때 자동 진단돼요.</div>`;
+    html+=`<div class="ama-note">현재가는 <b>공홈 외 판매처(항공사·OTA) 포함 캐시된 시장 최저가</b>(Travelpayouts). 저장한 노선은 앱 열 때 자동 진단돼요.</div>`;
     box.innerHTML=html;
   });
 }
-function keyNote(){ return '<div class="ama-note">⚙️ 특가 진단 준비 중 — 아마데우스 무료 키가 등록되면 <b>지금 최저가·특가 여부</b>가 여기 바로 표시돼요.</div>'; }
+function keyNote(){ return '<div class="ama-note">⚙️ 특가 진단 준비 중 — Travelpayouts 무료 토큰이 등록되면 <b>지금 최저가·특가 여부</b>가 여기 바로 표시돼요.</div>'; }
 render();
 if('serviceWorker' in navigator){
   let had=!!navigator.serviceWorker.controller, refreshing=false;

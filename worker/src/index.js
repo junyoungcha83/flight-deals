@@ -1,38 +1,34 @@
-// Amadeus 프록시 — mode=metrics(과거 가격분포) | mode=offers(현재 최저가). 시크릿은 서버에만.
+// Travelpayouts 프록시 — 노선 현재 최저가 + 이번 달 가격 분포. 토큰은 서버에만.
+// GET ?origin=ICN&destination=NRT&date=2026-08-20[&returnDate=2026-08-27&oneWay=false]&currency=KRW
 export default {
   async fetch(req, env) {
     const cors = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Methods':'GET,OPTIONS', 'Access-Control-Allow-Headers':'*' };
     if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
     const J = (o, s=200) => new Response(JSON.stringify(o), { status: s, headers: { ...cors, 'Content-Type':'application/json' } });
     try {
-      const u = new URL(req.url), p = u.searchParams;
+      const p = new URL(req.url).searchParams;
       const o = p.get('origin'), d = p.get('destination'), date = p.get('date');
-      const cur = p.get('currency') || 'KRW', mode = p.get('mode') || 'metrics';
+      const cur = (p.get('currency') || 'KRW').toLowerCase();
       const oneWay = p.get('oneWay') === 'true', ret = p.get('returnDate') || '';
-      const adt = p.get('adults') || '1', chd = p.get('children') || '0', inf = p.get('infants') || '0';
       if (!o || !d || !date) return J({ error: 'origin, destination, date 필요' }, 400);
-      if (!env.AMADEUS_ID || !env.AMADEUS_SECRET) return J({ error: 'Amadeus 키 미설정' }, 503);
-      const base = env.AMADEUS_BASE || 'https://test.api.amadeus.com';
-      const tr = await fetch(base + '/v1/security/oauth2/token', {
-        method: 'POST', headers: { 'Content-Type':'application/x-www-form-urlencoded' },
-        body: `grant_type=client_credentials&client_id=${encodeURIComponent(env.AMADEUS_ID)}&client_secret=${encodeURIComponent(env.AMADEUS_SECRET)}`
-      });
-      const tk = await tr.json();
-      if (!tk.access_token) return J({ error: 'token 실패', detail: tk }, 502);
-      const auth = { Authorization: 'Bearer ' + tk.access_token };
-      let url;
-      if (mode === 'offers') {
-        let q = `originLocationCode=${o}&destinationLocationCode=${d}&departureDate=${date}&adults=${adt}&currencyCode=${cur}&max=8&nonStop=false`;
-        if (!oneWay && ret) q += `&returnDate=${ret}`;
-        if (+chd > 0) q += `&children=${chd}`;
-        if (+inf > 0) q += `&infants=${inf}`;
-        url = base + '/v2/shopping/flight-offers?' + q;
-      } else {
-        url = base + `/v1/analytics/itinerary-price-metrics?originIataCode=${o}&destinationIataCode=${d}&departureDate=${date}&currencyCode=${cur}&oneWay=${oneWay}`;
-      }
-      const r = await fetch(url, { headers: auth });
+      if (!env.TP_TOKEN) return J({ error: 'Travelpayouts 토큰 미설정' }, 503);
+      const month = date.slice(0, 7);
+      let url = `https://api.travelpayouts.com/aviasales/v3/prices_for_dates?origin=${o}&destination=${d}`
+        + `&departure_at=${month}&currency=${cur}&sorting=price&direct=false&limit=1000&one_way=${oneWay ? 'true' : 'false'}&token=${env.TP_TOKEN}`;
+      if (!oneWay && ret) url += `&return_at=${ret.slice(0, 7)}`;
+      const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
       const data = await r.json();
-      return J(data, r.status);
+      if (data && data.error) return J({ error: data.error }, 502);
+      const rows = (data && data.data) || [];
+      const prices = rows.map(x => +x.price).filter(Boolean).sort((a, b) => a - b);
+      let dist = null;
+      if (prices.length) { const q = f => prices[Math.min(prices.length - 1, Math.round(f * (prices.length - 1)))];
+        dist = { min: prices[0], q1: q(.25), med: q(.5), q3: q(.75), max: prices[prices.length - 1] }; }
+      const dayRows = rows.filter(x => String(x.departure_at || '').slice(0, 10) === date);
+      const pick = dayRows.length ? dayRows : rows;
+      let current = null, airline = '';
+      if (pick.length) { let b = pick[0]; pick.forEach(x => { if (+x.price < +b.price) b = x; }); current = +b.price; airline = b.airline || ''; }
+      return J({ current, airline, currency: cur.toUpperCase(), dist, exact: dayRows.length > 0, count: rows.length });
     } catch (e) { return J({ error: String(e) }, 500); }
   }
 };
