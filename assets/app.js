@@ -1,5 +1,5 @@
 // 항공특가 — 실데이터 링크 런처(네이버·스카이스캐너·카약) + Travelpayouts 가격분석
-const BUILD = 'v4';
+const BUILD = 'v5';
 // Travelpayouts 프록시(Cloudflare Worker) URL — 배포 후 채워짐. 비어있으면 분석은 '설정 필요'로 표시.
 const PROXY_URL = 'https://amadeus-proxy.junyoung-cha83.workers.dev';
 const APP = document.getElementById('app');
@@ -34,6 +34,26 @@ const SKEY='fd-routes-v1';
 function loadRoutes(){ try{ return JSON.parse(localStorage.getItem(SKEY))||[]; }catch(_){ return []; } }
 function saveRoutes(r){ localStorage.setItem(SKEY, JSON.stringify(r)); }
 
+// ── 대륙(지역) → 대표 도시. 특가설정 탭에서 한국발 최저가 스캔용 ──
+const CONTINENTS = [
+  {key:'jp',   emoji:'🇯🇵', label:'일본',      def:300000, cities:['NRT','KIX','FUK','CTS','OKA','NGO']},
+  {key:'sea',  emoji:'🌴', label:'동남아',    def:300000, cities:['BKK','DAD','CXR','SGN','HAN','CEB','MNL','DPS','SIN','KUL']},
+  {key:'cn',   emoji:'🀄', label:'중화권',    def:250000, cities:['TPE','HKG','PVG','PEK','MFM','KHH']},
+  {key:'guam', emoji:'🏝', label:'괌·사이판', def:400000, cities:['GUM','SPN']},
+  {key:'eu',   emoji:'🇪🇺', label:'유럽',      def:900000, cities:['CDG','LHR','FCO','BCN','FRA','IST','ZRH','AMS','VIE','PRG']},
+  {key:'us',   emoji:'🗽', label:'미주',      def:900000, cities:['JFK','LAX','SFO','HNL','YVR','SEA','ORD','YYZ']},
+  {key:'oce',  emoji:'🦘', label:'대양주',    def:800000, cities:['SYD','MEL','BNE','AKL','OOL','NAN']},
+  {key:'mid',  emoji:'🕌', label:'중동·기타', def:700000, cities:['DXB','DOH','AUH','TLV','ULN','TAS']},
+];
+const CMAP={}; CONTINENTS.forEach(c=>CMAP[c.key]=c);
+const DKEY='fd-dealcfg-v1';
+function loadCfg(){ try{ const c=JSON.parse(localStorage.getItem(DKEY)); if(c&&c.regions) return c; }catch(_){}
+  return {regions:[], round:true, targets:{}}; }
+function saveCfg(c){ localStorage.setItem(DKEY, JSON.stringify(c)); }
+let CFG = loadCfg();
+let TAB = 'deals';        // 'deals'(특가설정) | 'search'(검색·예약)
+let _scannedOnce = false; // 앱 열 때 자동 특가 스캔 1회
+
 // ── 딥링크 ──
 const yymmdd = d => d.slice(2).replace(/-/g,'');
 function naver(s){
@@ -63,9 +83,20 @@ function stepper(label,key){
     <button class="stp-b" data-k="${key}" data-d="1">+</button></div></div>`;
 }
 function render(){
-  const routes=loadRoutes();
   APP.innerHTML=`
     <div class="top"><div class="brand">✈️ 항공특가 <sup class="ver">${BUILD}</sup></div></div>
+    <div class="tabs">
+      <button class="tab ${TAB==='deals'?'on':''}" data-t="deals">🔥 특가설정<span class="tab-badge" id="tabBadge"></span></button>
+      <button class="tab ${TAB==='search'?'on':''}" data-t="search">🔎 검색·예약</button>
+    </div>
+    <div id="tabbody"></div>`;
+  APP.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{ TAB=b.dataset.t; render(); });
+  if(TAB==='deals') renderDeals(); else renderSearch();
+  if(!_scannedOnce){ _scannedOnce=true; checkDealSettings(); }
+}
+function renderSearch(){
+  const routes=loadRoutes();
+  document.getElementById('tabbody').innerHTML=`
     <div class="sub">출발·도착을 넣으면 <b>지금 최저가·특가 여부</b>를 앱에서 바로 보고, 네이버·스카이스캐너·카약으로 이어서 예약해요.</div>
 
     <div class="card">
@@ -118,6 +149,110 @@ function render(){
 function routeChip(r,i){
   const f=AP[r.from]||[r.from,r.from], t=AP[r.to]||[r.to,r.to];
   return `<div class="rchip" data-i="${i}"><button class="ropen" data-i="${i}">${f[1]}(${r.from}) → ${t[1]}(${r.to}) · ${r.round?'왕복':'편도'}${r.thr?` · ~₩${Number(r.thr).toLocaleString()}`:''}<span class="rdeal"></span></button><button class="rdel" data-i="${i}">✕</button></div>`;
+}
+
+// ── 특가설정 탭: 한국발 → 대륙별 날짜무관 최저가 스캔 ──
+function targetsHtml(){
+  if(!CFG.regions.length) return '';
+  return '<label style="margin-top:12px">목표가 (선택 · 원, 비우면 자동 판정)</label>'
+    + CFG.regions.map(k=>{ const c=CMAP[k]; if(!c) return '';
+        return `<div class="tgt"><span>${c.emoji} ${c.label}</span><input class="in tgt-in" data-k="${k}" inputmode="numeric" placeholder="예: ${c.def.toLocaleString()}" value="${CFG.targets[k]?esc(CFG.targets[k]):''}"></div>`;
+      }).join('');
+}
+function renderDeals(){
+  const sel=new Set(CFG.regions);
+  document.getElementById('tabbody').innerHTML=`
+    <div class="sub">🇰🇷 <b>한국 전체 출발</b> · 날짜 상관없이 지금 뜬 <b>대륙별 최저가</b>를 모아 보여줘요. 목표가를 넣으면 그 이하일 때 🔥로 강조·알림돼요.</div>
+    <div class="card">
+      <div class="trip">
+        <button class="seg ${CFG.round?'on':''}" data-r="1">왕복</button>
+        <button class="seg ${!CFG.round?'on':''}" data-r="0">편도</button>
+      </div>
+      <label>관심 지역 (여러 개 선택)</label>
+      <div class="quick">${CONTINENTS.map(c=>`<button class="qchip ${sel.has(c.key)?'on':''}" data-k="${c.key}">${c.emoji} ${c.label}</button>`).join('')}</div>
+      <div id="targets">${targetsHtml()}</div>
+      <button class="go" id="scan">🔎 지금 특가 보기</button>
+      <button class="mini" id="dnotify" style="width:100%;margin-top:10px">🔔 특가 알림 켜기</button>
+    </div>
+    <div id="deals"></div>
+    <div class="note">가격은 <b>Travelpayouts 캐시된 시장 최저가</b>(항공사·OTA 포함), <b>날짜 무관 최저값</b> 기준이에요. 실제 예약가는 항목을 눌러 예약 사이트에서 확인하세요.</div>`;
+  bindDeals();
+}
+function bindTargets(){
+  document.querySelectorAll('.tgt-in').forEach(inp=>inp.oninput=e=>{
+    const k=inp.dataset.k, v=e.target.value.replace(/[^0-9]/g,'');
+    if(v) CFG.targets[k]=v; else delete CFG.targets[k]; saveCfg(CFG);
+  });
+}
+function bindDeals(){
+  const body=document.getElementById('tabbody');
+  body.querySelectorAll('.seg').forEach(b=>b.onclick=()=>{ CFG.round=b.dataset.r==='1'; saveCfg(CFG);
+    body.querySelectorAll('.seg').forEach(x=>x.classList.toggle('on',x===b)); });
+  body.querySelectorAll('.qchip').forEach(b=>b.onclick=()=>{ const k=b.dataset.k, i=CFG.regions.indexOf(k);
+    if(i>=0) CFG.regions.splice(i,1); else CFG.regions.push(k); saveCfg(CFG);
+    b.classList.toggle('on'); document.getElementById('targets').innerHTML=targetsHtml(); bindTargets(); });
+  bindTargets();
+  document.getElementById('scan').onclick=runDeals;
+  const nb=document.getElementById('dnotify');
+  if(nb){ if(('Notification' in window)&&Notification.permission==='granted') nb.textContent='🔔 특가 알림 ON';
+    nb.onclick=()=>{ if(!('Notification' in window)){ alert('이 브라우저는 알림을 지원하지 않아요.'); return; }
+      Notification.requestPermission().then(p=>{ if(p==='granted'){ nb.textContent='🔔 특가 알림 ON'; checkDealSettings(); } }); }; }
+}
+// 선택 지역 → 도시 합집합 → 프록시 배치 호출 → 지역 목표가로 판정
+function dealScan(cfg){
+  const destReg={}, dests=[];
+  cfg.regions.forEach(k=>{ const c=CMAP[k]; if(!c) return; c.cities.forEach(city=>{ if(!destReg[city]){ destReg[city]=k; dests.push(city); } }); });
+  if(!dests.length) return Promise.resolve([]);
+  const url=`${PROXY_URL}?origin=KR&dests=${dests.join(',')}&oneWay=${!cfg.round}&currency=KRW`;
+  return fetch(url).then(r=>r.json()).then(d=>{
+    if(!d||d.error||!d.deals) return null;
+    return d.deals.map(x=>{ const rk=destReg[x.dest]; const j=judge(x.price, x.dist, cfg.targets[rk]);
+      return Object.assign({}, x, {region:rk}, j); });
+  }).catch(()=>null);
+}
+function dealRow(x){
+  const c=CMAP[x.region]||{emoji:'',label:''};
+  const city=(AP[x.dest]||[x.dest,x.dest])[1];
+  return `<button class="drow ${x.cl}" data-dest="${x.dest}" data-origin="${esc(x.origin||'')}" data-date="${x.date||''}">
+    <div class="drow-l"><div class="drow-city">${c.emoji} ${esc(city)} <small>(${x.dest})</small></div>
+      <div class="drow-sub">${x.date||''}${x.airline?` · ${esc(x.airline)}`:''}${x.tag?` · ${x.tag}`:''}</div></div>
+    <div class="drow-p">${won(x.price)}</div></button>`;
+}
+function runDeals(){
+  if(!CFG.regions.length){ alert('관심 지역을 하나 이상 선택하세요.'); return; }
+  const box=document.getElementById('deals');
+  box.innerHTML='<div class="ama-note">지금 특가 불러오는 중… (지역이 많으면 몇 초 걸려요)</div>';
+  dealScan(CFG).then(rows=>{
+    if(!rows){ box.innerHTML='<div class="ama-note">불러오지 못했어요. 잠시 후 다시 시도해 주세요.</div>'; return; }
+    if(!rows.length){ box.innerHTML='<div class="ama-note">판매 중인 항공권을 못 찾았어요. 지역을 바꿔보세요.</div>'; return; }
+    box.innerHTML=`<div class="card"><div class="ch"><b>🔥 지금 한국발 최저가</b><span class="muted" style="margin-left:auto">${CFG.round?'왕복':'편도'} · ${rows.length}곳</span></div>`
+      + rows.map(dealRow).join('') + `</div>`;
+    box.querySelectorAll('.drow').forEach(b=>b.onclick=()=>openDeal(b.dataset));
+    box.scrollIntoView({behavior:'smooth',block:'start'});
+  });
+}
+// 특가 행 탭 → 검색·예약 탭으로 프리필 이동
+function openDeal(ds){
+  let orig=(ds.origin||'').toUpperCase(); if(orig==='SEL') orig='ICN'; if(!AP[orig]) orig='ICN';
+  S.from=AP[orig]; S.to=AP[ds.dest]||[ds.dest,ds.dest,''];
+  S.round=CFG.round; S.dep=ds.date||addD(21);
+  const rd=new Date(S.dep); rd.setDate(rd.getDate()+7); S.ret=rd.toISOString().slice(0,10);
+  S.thr=''; S.adt=1; S.chd=0; S.inf=0;
+  TAB='search'; render(); showResult(); window.scrollTo(0,0);
+}
+// 앱 열 때 저장된 특가설정 자동 스캔 → 탭 뱃지 + 알림
+function checkDealSettings(){
+  if(!PROXY_URL || !CFG.regions.length) return;
+  dealScan(CFG).then(rows=>{
+    if(!rows) return;
+    const deals=rows.filter(x=>x.deal);
+    const badge=document.getElementById('tabBadge'); if(badge) badge.textContent=deals.length?` ${deals.length}`:'';
+    if(deals.length && ('Notification' in window) && Notification.permission==='granted'){
+      deals.slice(0,3).forEach(x=>{ const key='d'+x.dest+x.date;
+        if(!_notified[key]){ _notified[key]=1; const city=(AP[x.dest]||[x.dest,x.dest])[1];
+          new Notification('🔥 항공특가 발견!', { body:`한국 → ${city} ${won(x.price)} (${x.tag||'특가'})`, icon:'assets/icon.svg' }); } });
+    }
+  });
 }
 
 // 자동완성 부착
@@ -195,24 +330,29 @@ function showResult(){
 const won = n => '₩'+Math.round(n).toLocaleString();
 function apiBase(s){ return `${PROXY_URL}?origin=${s.from[0]}&destination=${s.to[0]}&date=${s.dep}&currency=KRW&oneWay=${!s.round}`
   + `&adults=${s.adt}&children=${s.chd}&infants=${s.inf}` + (s.round&&s.ret?`&returnDate=${s.ret}`:''); }
+// 현재가 vs 분포(dist:{min,q1,med,q3,max}) + 목표가 → 특가 판정 (검색·특가설정 공용)
+function judge(cur, dist, target){
+  let deal=false, tag='', cl='mid';
+  if(dist && cur!=null){
+    if(cur<=dist.min){tag='🔥 이번 달 최저가!';cl='fire';deal=true;}
+    else if(cur<=dist.q1){tag='👍 저렴 (하위 25%)';cl='good';deal=true;}
+    else if(cur<=dist.med){tag='🙂 평균 이하';cl='good';}
+    else if(cur<=dist.q3){tag='😐 평균 이상';cl='mid';}
+    else {tag='💸 비싼 편';cl='bad';}
+  }
+  const t=+target;
+  if(t && cur!=null && cur<=t){ deal=true; if(!/최저|저렴/.test(tag)){ tag=(tag?tag+' · ':'')+'🎯 목표가 이하'; cl='good'; } }
+  return {deal,tag,cl};
+}
 // 현재 최저가 + 이번 달 분포로 특가 판정. 콜백(result)로도 넘겨줌(저장노선 자동진단용)
 function diagnose(s, cb){
   return fetch(apiBase(s)).then(r=>r.json()).catch(()=>({error:true})).then(d=>{
     if(d&&d.error) return {error:true};
     // 프록시 정규화 응답: {current, airline, dist:{min,q1,med,q3,max}}
-    let g=null; const dd=d&&d.dist;
+    const dd=d&&d.dist; let g=null;
     if(dd){ g={MINIMUM:+dd.min, FIRST_QUARTILE:+dd.q1, MEDIUM:+dd.med, THIRD_QUARTILE:+dd.q3, MAXIMUM:+dd.max}; }
     let cur=(d&&d.current!=null)?+d.current:null, carrier=(d&&d.airline)||'';
-    // 특가 판정
-    let deal=false, tag='', cl='mid'; const thr=+s.thr;
-    if(g && cur!=null){
-      if(cur<=g.MINIMUM){tag='🔥 이번 달 최저가!';cl='fire';deal=true;}
-      else if(cur<=g.FIRST_QUARTILE){tag='👍 저렴 (하위 25%)';cl='good';deal=true;}
-      else if(cur<=g.MEDIUM){tag='🙂 평균 이하';cl='good';}
-      else if(cur<=g.THIRD_QUARTILE){tag='😐 평균 이상';cl='mid';}
-      else {tag='💸 비싼 편';cl='bad';}
-    }
-    if(thr && cur!=null && cur<=thr){ deal=true; if(!/최저|저렴/.test(tag)){ tag=(tag?tag+' · ':'')+'🎯 목표가 이하'; cl='good'; } }
+    const {deal,tag,cl}=judge(cur, dd, s.thr);
     const res={g,cur,carrier,deal,tag,cl};
     if(cb) cb(res);
     return res;

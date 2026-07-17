@@ -28,6 +28,29 @@ label{display:block;font-size:.78rem;color:var(--muted);font-weight:700;margin:0
 .quick{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 12px}
 .qchip{background:#0f1f31;border:1px solid var(--line);color:var(--ink);border-radius:999px;padding:6px 11px;font-weight:700;font-size:.82rem;cursor:pointer}
 .qchip:active{border-color:var(--brand);color:var(--brand)}
+.qchip.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+
+/* 탭 */
+.tabs{display:flex;gap:6px;margin:8px 0 14px}
+.tab{flex:1;background:#0f1f31;border:1px solid var(--line);color:var(--muted);border-radius:12px;padding:11px;font-weight:800;font-size:.95rem;cursor:pointer}
+.tab.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+.tab-badge{color:#ff8a5b;font-weight:900}
+.tab.on .tab-badge{color:#ffd8a8}
+
+/* 목표가 입력행 */
+.tgt{display:flex;align-items:center;gap:8px;margin-top:6px}
+.tgt>span{flex:none;width:96px;font-weight:800;font-size:.9rem}
+.tgt-in{flex:1}
+
+/* 특가 리스트 행 */
+.drow{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:#0f1f31;border:1px solid var(--line);border-radius:13px;padding:12px;margin-bottom:8px;color:var(--ink);cursor:pointer}
+.drow.fire{background:#3a1414;border-color:#ff6b3d}.drow.good{background:#0f2e22;border-color:#2bbf7e}
+.drow.bad{opacity:.75}
+.drow-l{flex:1;min-width:0}
+.drow-city{font-weight:900;font-size:1rem}.drow-city small{color:var(--muted);font-weight:700;font-size:.78rem}
+.drow-sub{color:var(--muted);font-size:.8rem;margin-top:2px;font-weight:700}
+.drow.fire .drow-sub,.drow.good .drow-sub{color:#ffe1cf}
+.drow-p{flex:none;font-weight:900;font-size:1.15rem}
 
 .trip{display:flex;gap:8px;margin-bottom:10px}
 .seg{flex:1;background:#0f1f31;border:1px solid var(--line);color:var(--muted);border-radius:12px;padding:10px;font-weight:800;cursor:pointer}
