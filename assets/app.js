@@ -1,5 +1,5 @@
 // 항공특가 — 실데이터 링크 런처(네이버·스카이스캐너·카약) + Travelpayouts 가격분석
-const BUILD = 'v5';
+const BUILD = 'v6';
 // Travelpayouts 프록시(Cloudflare Worker) URL — 배포 후 채워짐. 비어있으면 분석은 '설정 필요'로 표시.
 const PROXY_URL = 'https://amadeus-proxy.junyoung-cha83.workers.dev';
 const APP = document.getElementById('app');
@@ -47,11 +47,28 @@ const CONTINENTS = [
 ];
 const CMAP={}; CONTINENTS.forEach(c=>CMAP[c.key]=c);
 const DKEY='fd-dealcfg-v1';
-function loadCfg(){ try{ const c=JSON.parse(localStorage.getItem(DKEY)); if(c&&c.regions) return c; }catch(_){}
-  return {regions:[], round:true, targets:{}}; }
+function loadCfg(){ try{ const c=JSON.parse(localStorage.getItem(DKEY)); if(c&&c.regions) return Object.assign({adt:1,chd:0,inf:0},c); }catch(_){}
+  return {regions:[], round:true, targets:{}, adt:1, chd:0, inf:0}; }
 function saveCfg(c){ localStorage.setItem(DKEY, JSON.stringify(c)); }
 let CFG = loadCfg();
-let TAB = 'deals';        // 'deals'(특가설정) | 'search'(검색·예약)
+
+// ── 개인설정: 우리가족 프로필 (나이→항공 인원) ──
+const FKEY='fd-family-v1';
+const FAMILY_SEED=[{name:'아빠',age:44,sex:'m'},{name:'엄마',age:42,sex:'f'},{name:'아들',age:12,sex:'m'},{name:'딸',age:7,sex:'f'}];
+function loadFamily(){ try{ const f=JSON.parse(localStorage.getItem(FKEY)); if(Array.isArray(f)) return f; }catch(_){} return null; }
+function saveFamily(f){ localStorage.setItem(FKEY, JSON.stringify(f)); }
+// 만12세+ = 성인, 2~11세 = 어린이(소아), 2세 미만 = 유아. 성인 최소 1.
+function paxFromFamily(members){
+  let adt=0, chd=0, inf=0;
+  (members||[]).forEach(m=>{ const a=+m.age; if(a>=12) adt++; else if(a>=2) chd++; else inf++; });
+  return { adt:Math.max(1,adt), chd, inf };
+}
+function applyFamilyPax(){ const p=paxFromFamily(FAM); CFG.adt=p.adt; CFG.chd=p.chd; CFG.inf=p.inf; saveCfg(CFG);
+  S.adt=p.adt; S.chd=p.chd; S.inf=p.inf; }
+let FAM = loadFamily();
+if(!FAM){ FAM = FAMILY_SEED.map(m=>Object.assign({},m)); saveFamily(FAM); applyFamilyPax(); }  // 최초 1회 가족 인원 고정
+
+let TAB = 'deals';        // 'deals'(특가설정) | 'search'(검색·예약) | 'family'(개인설정)
 let _scannedOnce = false; // 앱 열 때 자동 특가 스캔 1회
 
 // ── 딥링크 ──
@@ -82,16 +99,24 @@ function stepper(label,key){
     <b id="pax_${key}">${S[key]}</b>
     <button class="stp-b" data-k="${key}" data-d="1">+</button></div></div>`;
 }
+// 특가설정(CFG)용 인원 스테퍼
+function cfgStepper(label,key){
+  return `<div class="stp"><span class="stp-l">${label}</span>
+    <div class="stp-c"><button class="dstp-b" data-k="${key}" data-d="-1">−</button>
+    <b id="cpax_${key}">${CFG[key]}</b>
+    <button class="dstp-b" data-k="${key}" data-d="1">+</button></div></div>`;
+}
 function render(){
   APP.innerHTML=`
     <div class="top"><div class="brand">✈️ 항공특가 <sup class="ver">${BUILD}</sup></div></div>
     <div class="tabs">
       <button class="tab ${TAB==='deals'?'on':''}" data-t="deals">🔥 특가설정<span class="tab-badge" id="tabBadge"></span></button>
       <button class="tab ${TAB==='search'?'on':''}" data-t="search">🔎 검색·예약</button>
+      <button class="tab ${TAB==='family'?'on':''}" data-t="family">👤 개인설정</button>
     </div>
     <div id="tabbody"></div>`;
   APP.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{ TAB=b.dataset.t; render(); });
-  if(TAB==='deals') renderDeals(); else renderSearch();
+  if(TAB==='deals') renderDeals(); else if(TAB==='family') renderFamily(); else renderSearch();
   if(!_scannedOnce){ _scannedOnce=true; checkDealSettings(); }
 }
 function renderSearch(){
@@ -168,6 +193,10 @@ function renderDeals(){
         <button class="seg ${CFG.round?'on':''}" data-r="1">왕복</button>
         <button class="seg ${!CFG.round?'on':''}" data-r="0">편도</button>
       </div>
+      <div class="pax">
+        <label>인원 <span style="font-weight:600;color:var(--muted)">(예약·검색에 반영)</span></label>
+        ${cfgStepper('성인','adt')}${cfgStepper('어린이 <span>(2~11세)</span>','chd')}${cfgStepper('유아 <span>(0~1세)</span>','inf')}
+      </div>
       <label>관심 지역 (여러 개 선택)</label>
       <div class="quick">${CONTINENTS.map(c=>`<button class="qchip ${sel.has(c.key)?'on':''}" data-k="${c.key}">${c.emoji} ${c.label}</button>`).join('')}</div>
       <div id="targets">${targetsHtml()}</div>
@@ -192,6 +221,13 @@ function bindDeals(){
     if(i>=0) CFG.regions.splice(i,1); else CFG.regions.push(k); saveCfg(CFG);
     b.classList.toggle('on'); document.getElementById('targets').innerHTML=targetsHtml(); bindTargets(); });
   bindTargets();
+  body.querySelectorAll('.dstp-b').forEach(b=>b.onclick=()=>{ const k=b.dataset.k, d=+b.dataset.d;
+    let v=CFG[k]+d;
+    if(k==='adt') v=Math.max(1,Math.min(9,v));
+    else if(k==='chd') v=Math.max(0,Math.min(8,v));
+    else if(k==='inf') v=Math.max(0,Math.min(CFG.adt,v));
+    CFG[k]=v; if(k==='adt'&&CFG.inf>CFG.adt){ CFG.inf=CFG.adt; const ie=document.getElementById('cpax_inf'); if(ie)ie.textContent=CFG.inf; }
+    saveCfg(CFG); const el=document.getElementById('cpax_'+k); if(el) el.textContent=v; });
   document.getElementById('scan').onclick=runDeals;
   const nb=document.getElementById('dnotify');
   if(nb){ if(('Notification' in window)&&Notification.permission==='granted') nb.textContent='🔔 특가 알림 ON';
@@ -237,8 +273,46 @@ function openDeal(ds){
   S.from=AP[orig]; S.to=AP[ds.dest]||[ds.dest,ds.dest,''];
   S.round=CFG.round; S.dep=ds.date||addD(21);
   const rd=new Date(S.dep); rd.setDate(rd.getDate()+7); S.ret=rd.toISOString().slice(0,10);
-  S.thr=''; S.adt=1; S.chd=0; S.inf=0;
+  S.thr=''; S.adt=CFG.adt; S.chd=CFG.chd; S.inf=CFG.inf;   // 특가설정 인원 그대로 예약으로
   TAB='search'; render(); showResult(); window.scrollTo(0,0);
+}
+// ── 개인설정 탭: 우리가족 ──
+function famRow(m,i){
+  return `<div class="fam-row" data-i="${i}">
+    <input class="in fam-name" data-i="${i}" value="${esc(m.name||'')}" placeholder="이름">
+    <button class="fam-sex ${m.sex==='f'?'f':'m'}" data-i="${i}">${m.sex==='f'?'여':'남'}</button>
+    <div class="stp-c fam-age"><button class="fstp-b" data-i="${i}" data-d="-1">−</button>
+      <b id="fage_${i}">${+m.age||0}</b><span class="fage-u">세</span>
+      <button class="fstp-b" data-i="${i}" data-d="1">+</button></div>
+    <button class="rdel fam-del" data-i="${i}" title="삭제">✕</button></div>`;
+}
+function famSumHtml(){ const p=paxFromFamily(FAM); return `이 가족 = <b>성인 ${p.adt}</b> · 어린이 ${p.chd} · 유아 ${p.inf}`; }
+function renderFamily(){
+  document.getElementById('tabbody').innerHTML=`
+    <div class="sub">👨‍👩‍👧‍👦 <b>우리가족</b>을 저장해두면 인원(성인·어린이·유아)이 자동 계산돼 특가설정·예약에 쓰여요.<br>나이 기준: <b>만 12세+ 성인 · 2~11세 어린이 · 2세 미만 유아</b>.</div>
+    <div class="card">
+      <div id="famList">${FAM.map((m,i)=>famRow(m,i)).join('')}</div>
+      <button class="mini" id="famAdd" style="width:100%;margin-top:10px">+ 가족 추가</button>
+    </div>
+    <div class="card">
+      <div class="fam-sum">${famSumHtml()}</div>
+      <button class="go" id="famApply">✅ 우리가족 인원으로 적용</button>
+    </div>
+    <div class="note">인원은 여기(개인설정)나 특가설정 탭에서 언제든 바꿀 수 있어요. 설정값은 이 기기에 저장돼요.</div>`;
+  bindFamily();
+}
+function bindFamily(){
+  const body=document.getElementById('tabbody');
+  body.querySelectorAll('.fam-name').forEach(inp=>inp.oninput=()=>{ FAM[+inp.dataset.i].name=inp.value; saveFamily(FAM); });
+  body.querySelectorAll('.fam-sex').forEach(b=>b.onclick=()=>{ const m=FAM[+b.dataset.i]; m.sex=m.sex==='f'?'m':'f'; saveFamily(FAM);
+    b.textContent=m.sex==='f'?'여':'남'; b.classList.toggle('f',m.sex==='f'); b.classList.toggle('m',m.sex!=='f'); });
+  body.querySelectorAll('.fstp-b').forEach(b=>b.onclick=()=>{ const i=+b.dataset.i, m=FAM[i]; let a=(+m.age||0)+(+b.dataset.d);
+    a=Math.max(0,Math.min(120,a)); m.age=a; saveFamily(FAM); const el=document.getElementById('fage_'+i); if(el)el.textContent=a;
+    const sum=body.querySelector('.fam-sum'); if(sum) sum.innerHTML=famSumHtml(); });
+  body.querySelectorAll('.fam-del').forEach(b=>b.onclick=()=>{ if(FAM.length<=1){ alert('최소 1명은 필요해요.'); return; }
+    FAM.splice(+b.dataset.i,1); saveFamily(FAM); renderFamily(); });
+  const add=document.getElementById('famAdd'); if(add) add.onclick=()=>{ FAM.push({name:'가족',age:30,sex:'m'}); saveFamily(FAM); renderFamily(); };
+  const ap=document.getElementById('famApply'); if(ap) ap.onclick=()=>{ applyFamilyPax(); TAB='deals'; render(); };
 }
 // 앱 열 때 저장된 특가설정 자동 스캔 → 탭 뱃지 + 알림
 function checkDealSettings(){

@@ -1,4 +1,4 @@
-const CACHE = 'flightdeal-v5';
+const CACHE = 'flightdeal-v6';
 self.addEventListener('message', e => { if (e.data === 'skip-waiting') self.skipWaiting(); });
 const CORE = ['./','./index.html','./assets/app.css','./assets/app.js','./manifest.webmanifest','./assets/icon.svg'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c=>c.addAll(CORE).catch(()=>{}))); self.skipWaiting(); });

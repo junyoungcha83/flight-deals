@@ -90,6 +90,22 @@ label{display:block;font-size:.78rem;color:var(--muted);font-weight:700;margin:0
 .stp-c{display:flex;align-items:center;gap:14px}
 .stp-b{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:#0f1f31;color:var(--brand);font-size:1.2rem;font-weight:900;cursor:pointer}
 .stp-c b{min-width:20px;text-align:center;font-size:1.05rem}
+.dstp-b{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:#0f1f31;color:var(--brand);font-size:1.2rem;font-weight:900;cursor:pointer}
+
+/* 개인설정: 우리가족 */
+.fam-row{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+.fam-row:last-child{border-bottom:none}
+.fam-name{flex:1;min-width:0;padding:9px 10px;font-size:.95rem}
+.fam-sex{flex:none;width:38px;height:34px;border-radius:10px;border:1px solid var(--line);font-weight:800;font-size:.85rem;cursor:pointer;background:#0f1f31}
+.fam-sex.m{color:#5aa9ff;border-color:#2f5f8f}
+.fam-sex.f{color:#ff8ac0;border-color:#8f3f6a}
+.fam-age{gap:10px}
+.fam-age .fstp-b{width:32px;height:32px;border-radius:9px;border:1px solid var(--line);background:#0f1f31;color:var(--brand);font-size:1.15rem;font-weight:900;cursor:pointer}
+.fam-age b{min-width:26px;text-align:center;font-size:1rem}
+.fage-u{color:var(--muted);font-size:.78rem;font-weight:700;margin-left:-6px}
+.fam-del{width:36px;height:34px;flex:none}
+.fam-sum{font-weight:800;font-size:1rem;margin-bottom:10px;text-align:center}
+.fam-sum b{color:var(--brand)}
 
 /* 아마데우스 분석 */
 .ama-btn{width:100%;margin-top:10px;background:#0f1f31;border:1px solid var(--brand);color:var(--brand);border-radius:13px;padding:12px;font-weight:800;cursor:pointer}
