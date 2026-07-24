@@ -1,2 +1,6 @@
 .DS_Store
 _*.html
+
+# Cloudflare wrangler 로컬 캐시·인증 (커밋 금지)
+.wrangler/
+.dev.vars
